@@ -170,6 +170,29 @@ provider chain includes `EnvironmentVariableCredentialsProvider`, so
 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` on the container are enough. That
 keeps the XML free of both secrets and SDK-version-specific class names.
 
+### Materialized views need the Hive Metastore, not a REST catalog
+
+Verified on this stack: with Polaris as the only metadata store, Trino refuses
+outright.
+
+```sql
+CREATE MATERIALIZED VIEW polaris.reporting.events_daily_mv AS SELECT ...
+-- Query ... failed: createMaterializedView is not supported for Iceberg REST catalog
+```
+
+The message names the **catalog type**, not Polaris — so this applies to any
+`iceberg.catalog.type=rest` backend, not just Polaris. Everything else about
+the REST catalog works: `CREATE SCHEMA`, `CREATE TABLE AS` (50k rows written
+and read back), and plain `CREATE VIEW` all succeed. Only the materialized
+variant is missing, and `system.metadata.materialized_views` stays empty for
+that catalog.
+
+So the daily rollup below has to live in the `iceberg` (Hive-metastore)
+catalog. On a REST catalog your options are a plain view, or a real table
+rebuilt on a schedule with `CREATE OR REPLACE TABLE ... AS SELECT`.
+
+Reproduce it with `make polaris-only` — see the Polaris section near the end.
+
 ### Materialized views refresh on a sidecar, not inside Trino
 
 Trino has **no scheduler**. `REFRESH MATERIALIZED VIEW` is a statement someone

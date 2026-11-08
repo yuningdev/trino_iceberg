@@ -1,0 +1,81 @@
+# ============================================================================
+# Overlay: run Trino with Apache Polaris as the ONLY metadata store.
+# The Hive Metastore and its Postgres are not used at all.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.polaris-only.yml \
+#         up -d polaris trino-coordinator trino-worker
+#     docker compose stop hive-metastore postgres mv-refresh
+#
+# or just:  make polaris-only
+#
+# How this differs from docker-compose.polaris.yml, which adds Polaris
+# *alongside* the Hive catalogs:
+#
+#   * The whole catalog directory is swapped for conf/trino/catalog-polaris,
+#     which contains no hive / iceberg / metastore_db catalog. Those need a
+#     live metastore, and the point here is to not have one.
+#
+#   * `!reset` clears the base file's depends_on, which would otherwise pull
+#     hive-metastore and postgres back up — depends_on merges rather than
+#     replaces across overlays. Needs Compose >= 2.24.
+#
+# Polaris runs with in-memory persistence, so it needs no database of its own
+# — but it also forgets every catalog, namespace and table when it restarts.
+# Re-run `make polaris-bootstrap` after a restart.
+# ============================================================================
+
+services:
+
+  polaris:
+    image: apache/polaris:${POLARIS_VERSION}
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      POLARIS_PERSISTENCE_TYPE: in-memory
+      POLARIS_REALM_CONTEXT_REALMS: ${POLARIS_REALM}
+      POLARIS_BOOTSTRAP_CREDENTIALS: ${POLARIS_REALM},${POLARIS_CLIENT_ID},${POLARIS_CLIENT_SECRET}
+      POLARIS_FEATURES_ALLOW_INSECURE_STORAGE_TYPES: "true"
+      POLARIS_FEATURES_SUPPORTED_CATALOG_STORAGE_TYPES: "[\"S3\",\"FILE\"]"
+      POLARIS_STORAGE_AWS_ACCESS_KEY: ${MINIO_ROOT_USER}
+      POLARIS_STORAGE_AWS_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_REGION: ${AWS_REGION}
+      QUARKUS_LOG_LEVEL: INFO
+    ports:
+      - "${POLARIS_PORT}:8181"
+      - "${POLARIS_MGMT_PORT}:8182"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8181"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [lakehouse]
+    restart: unless-stopped
+
+  trino-coordinator:
+    depends_on: !reset null
+    environment:
+      POLARIS_CATALOG: ${POLARIS_CATALOG}
+      POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID}
+      POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET}
+    volumes: !override
+      - ./conf/trino/catalog-polaris:/etc/trino/catalog:ro
+      - ./conf/trino/coordinator/config.properties:/etc/trino/config.properties:ro
+      - ./conf/trino/coordinator/node.properties:/etc/trino/node.properties:ro
+      - ./conf/trino/coordinator/log.properties:/etc/trino/log.properties:ro
+      - ./sql:/sql:ro
+
+  trino-worker:
+    depends_on: !reset null
+    environment:
+      POLARIS_CATALOG: ${POLARIS_CATALOG}
+      POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID}
+      POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET}
+    volumes: !override
+      - ./conf/trino/catalog-polaris:/etc/trino/catalog:ro
+      - ./conf/trino/worker/config.properties:/etc/trino/config.properties:ro
+      - ./conf/trino/worker/node.properties:/etc/trino/node.properties:ro
+      - ./conf/trino/worker/log.properties:/etc/trino/log.properties:ro

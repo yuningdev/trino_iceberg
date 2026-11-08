@@ -14,7 +14,7 @@ export
 .PHONY: help up down restart clean build ps logs logs-trino logs-hms health cli \
         sql seed features checks scale ui minio-ui bucket doctor wait \
         polaris-up polaris-down polaris-bootstrap pyspark compare \
-        mv mv-refresh mv-status logs-mv
+        mv mv-refresh mv-status logs-mv polaris-only hms-back
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -116,6 +116,24 @@ polaris-up: ## Start the stack with Apache Polaris as a second catalog
 
 polaris-bootstrap: ## Create the Polaris catalog + grants (run after polaris-up)
 	@./scripts/polaris-bootstrap.sh
+
+polaris-only: ## Run Trino with Polaris as the ONLY metadata store (HMS + Postgres stopped)
+	docker compose -f docker-compose.yml -f docker-compose.polaris-only.yml up -d polaris
+	@printf 'waiting for polaris'
+	@for i in $$(seq 1 60); do \
+		[ "$$(docker inspect trino-playground-polaris-1 -f '{{.State.Health.Status}}' 2>/dev/null)" = healthy ] \
+			&& { echo ' ready'; break; }; printf '.'; sleep 2; \
+	done
+	@./scripts/polaris-bootstrap.sh
+	$(COMPOSE) stop mv-refresh hive-metastore postgres
+	docker compose -f docker-compose.yml -f docker-compose.polaris-only.yml up -d trino-coordinator trino-worker
+	@$(MAKE) --no-print-directory wait
+	@echo "Polaris is now the only metadata store. 'make hms-back' restores the Hive path."
+
+hms-back: ## Undo polaris-only: bring HMS + Postgres back and reattach their catalogs
+	docker compose -f docker-compose.yml -f docker-compose.polaris-only.yml down --remove-orphans
+	$(COMPOSE) up -d
+	@$(MAKE) --no-print-directory wait health
 
 polaris-down: ## Stop the Polaris overlay
 	$(COMPOSE_POLARIS) down --remove-orphans
