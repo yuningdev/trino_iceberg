@@ -1,0 +1,1067 @@
+<title>Querying the Lakehouse</title>
+<style>
+  /* ---------- tokens: light is the base ---------- */
+  :root {
+    --paper:        #F6F7F9;
+    --surface:      #FFFFFF;
+    --surface-2:    #F0F2F6;
+    --ink:          #11161D;
+    --ink-2:        #475467;
+    --ink-3:        #7A8699;
+    --rule:         #DFE3EA;
+    --rule-strong:  #C3CAD6;
+    --accent:       #A35709;
+    --accent-ink:   #7A4107;
+    --accent-soft:  #FDF3E7;
+    --iceberg:      #156F7D;
+    --iceberg-soft: #E4F2F4;
+    --hive:         #8A4F34;
+    --hive-soft:    #F7EBE4;
+    --yes:          #1F6B4A;
+    --no:           #9B3330;
+    --code-bg:      #F0F2F6;
+    --shadow:       0 1px 2px rgba(17,22,29,.05), 0 8px 24px -12px rgba(17,22,29,.12);
+
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", ui-serif, serif;
+    --sans:  system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono:  ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:        #0E1319;
+      --surface:      #161C24;
+      --surface-2:    #1B222C;
+      --ink:          #E6EAF0;
+      --ink-2:        #A3AEBF;
+      --ink-3:        #6F7D91;
+      --rule:         #262F3A;
+      --rule-strong:  #374453;
+      --accent:       #E9A445;
+      --accent-ink:   #F2BE73;
+      --accent-soft:  #2A1F12;
+      --iceberg:      #4FC2D1;
+      --iceberg-soft: #10262B;
+      --hive:         #D99273;
+      --hive-soft:    #2A1C15;
+      --yes:          #5FBF8E;
+      --no:           #E8837E;
+      --code-bg:      #10161D;
+      --shadow:       0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:        #0E1319;
+    --surface:      #161C24;
+    --surface-2:    #1B222C;
+    --ink:          #E6EAF0;
+    --ink-2:        #A3AEBF;
+    --ink-3:        #6F7D91;
+    --rule:         #262F3A;
+    --rule-strong:  #374453;
+    --accent:       #E9A445;
+    --accent-ink:   #F2BE73;
+    --accent-soft:  #2A1F12;
+    --iceberg:      #4FC2D1;
+    --iceberg-soft: #10262B;
+    --hive:         #D99273;
+    --hive-soft:    #2A1C15;
+    --yes:          #5FBF8E;
+    --no:           #E8837E;
+    --code-bg:      #10161D;
+    --shadow:       0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- shell ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 56px;
+    max-width: 1140px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+
+  /* ---------- nav rail ---------- */
+  .rail { position: relative; }
+  .rail-inner {
+    position: sticky;
+    top: 0;
+    padding: 56px 0 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    max-height: 100vh;
+    overflow-y: auto;
+  }
+  .brand {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .toc { display: flex; flex-direction: column; gap: 2px; }
+  .toc a {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    text-decoration: none;
+    padding: 6px 10px 6px 12px;
+    border-left: 2px solid transparent;
+    border-radius: 0 3px 3px 0;
+    transition: color .12s, background .12s, border-color .12s;
+  }
+  .toc a:hover,
+  .toc a:focus-visible {
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+    outline: none;
+  }
+  .toc .toc-num {
+    color: var(--ink-3);
+    margin-right: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- content ---------- */
+  .content { padding: 56px 0 120px; min-width: 0; }
+  .prose { max-width: 68ch; }
+
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(34px, 4.4vw, 46px);
+    line-height: 1.12;
+    font-weight: 400;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0 0 18px;
+  }
+  .standfirst {
+    font-size: 18px;
+    line-height: 1.6;
+    color: var(--ink-2);
+    max-width: 60ch;
+    margin: 0 0 14px;
+  }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 27px;
+    font-weight: 400;
+    line-height: 1.22;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+    margin: 0;
+  }
+  h3 {
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: .005em;
+    margin: 0;
+  }
+
+  section { padding-top: 56px; }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding-bottom: 10px;
+    margin-bottom: 26px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    flex: none;
+    padding-top: 4px;
+  }
+
+  p { margin: 0 0 16px; }
+  .prose > p:last-child, .block > p:last-child { margin-bottom: 0; }
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  code {
+    font-family: var(--mono);
+    font-size: .875em;
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .1em .36em;
+    white-space: nowrap;
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 7px;
+    padding: 16px 18px;
+    margin: 0 0 18px;
+    overflow-x: auto;
+    tab-size: 2;
+  }
+  pre code {
+    background: none; border: 0; padding: 0; font-size: inherit; white-space: pre;
+  }
+  pre .c { color: var(--ink-3); }           /* comment */
+  pre .k { color: var(--accent-ink); }      /* keyword / prompt */
+  pre .s { color: var(--iceberg); }         /* string-ish */
+
+  .stack { display: flex; flex-direction: column; gap: 18px; }
+  .block { display: flex; flex-direction: column; gap: 10px; max-width: 68ch; }
+
+  /* ---------- connection card ---------- */
+  .conn {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .conn-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 14px 20px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule);
+  }
+  .conn-head h3 { font-size: 14px; }
+  .conn-tag {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .fields { display: grid; grid-template-columns: 140px minmax(0,1fr); }
+  .fields > dt,
+  .fields > dd {
+    padding: 11px 20px;
+    border-top: 1px solid var(--rule);
+    margin: 0;
+    min-width: 0;
+  }
+  .fields > dt:first-of-type, .fields > dd:first-of-type { border-top: 0; }
+  .fields > dt {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-top: 13px;
+  }
+  .fields > dd {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    color: var(--ink);
+    user-select: all;               /* one click selects the whole value */
+    overflow-wrap: anywhere;
+  }
+  .fields > dd.loose { user-select: auto; font-family: var(--sans); font-size: 14px; color: var(--ink-2); }
+
+  /* ---------- callout ---------- */
+  .note {
+    display: grid;
+    grid-template-columns: auto minmax(0,1fr);
+    gap: 14px;
+    align-items: start;
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    border-radius: 8px;
+    padding: 14px 18px;
+    max-width: 68ch;
+    margin-bottom: 18px;
+  }
+  .note-label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    padding-top: 4px;
+    white-space: nowrap;
+  }
+  .note p { margin: 0; font-size: 14.5px; color: var(--ink-2); }
+  .note p + p { margin-top: 8px; }
+
+  /* ---------- tables ---------- */
+  .tw { overflow-x: auto; margin-bottom: 20px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  thead th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    padding: 11px 16px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody td { padding: 11px 16px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--ink-2); }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody td:first-child { color: var(--ink); }
+  td.op { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+  td.mid { text-align: center; }
+
+  th.fmt-ice, th.fmt-hive { text-align: center; }
+  th.fmt-ice { color: var(--iceberg); }
+  th.fmt-hive { color: var(--hive); }
+
+  .chip {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .04em;
+    padding: 2px 8px;
+    border-radius: 100px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .chip.y { color: var(--yes); }
+  .chip.n { color: var(--no); }
+  .chip.partial { color: var(--accent-ink); }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 3px 9px;
+    border-radius: 5px;
+  }
+  .pill.ice { color: var(--iceberg); background: var(--iceberg-soft); }
+  .pill.hive { color: var(--hive); background: var(--hive-soft); }
+
+  /* ---------- hierarchy diagram ---------- */
+  .naming {
+    font-family: var(--mono);
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 18px;
+    overflow-x: auto;
+  }
+  .naming-line { font-size: 15px; white-space: nowrap; }
+  .naming-line .p1 { color: var(--accent); }
+  .naming-line .p2 { color: var(--iceberg); }
+  .naming-line .p3 { color: var(--ink); }
+  .naming-line .dot { color: var(--ink-3); }
+  .naming-legend {
+    display: flex; gap: 26px; flex-wrap: wrap;
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--rule);
+    font-size: 11.5px; color: var(--ink-2);
+  }
+  .naming-legend b { font-weight: 500; }
+  .naming-legend .p1 { color: var(--accent); }
+  .naming-legend .p2 { color: var(--iceberg); }
+  .naming-legend .p3 { color: var(--ink); }
+
+  footer {
+    margin-top: 76px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    max-width: 68ch;
+  }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  /* ---------- narrow ---------- */
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: minmax(0,1fr); gap: 0; padding: 0 22px; }
+    .rail-inner {
+      position: static; max-height: none; padding: 32px 0 0;
+      flex-direction: column; gap: 16px;
+    }
+    .toc {
+      flex-direction: row; flex-wrap: wrap; gap: 4px;
+    }
+    .toc a { border-left: 0; border-bottom: 2px solid transparent; border-radius: 3px; padding: 5px 9px; }
+    .toc a:hover, .toc a:focus-visible { border-left-color: transparent; border-bottom-color: var(--accent); }
+    .toc .toc-num { display: none; }
+    .content { padding-top: 34px; }
+    .fields { grid-template-columns: minmax(0,1fr); }
+    .fields > dt { padding-bottom: 0; border-top: 1px solid var(--rule); }
+    .fields > dd { padding-top: 4px; border-top: 0; }
+    .fields > dt:first-of-type { border-top: 0; }
+    .note { grid-template-columns: minmax(0,1fr); gap: 6px; }
+    .note-label { padding-top: 0; }
+  }
+</style>
+
+<div class="shell">
+
+  <nav class="rail">
+    <div class="rail-inner">
+      <div class="brand">Trino&nbsp;·&nbsp;Lakehouse</div>
+      <div class="toc">
+        <a href="#names"><span class="toc-num">01</span>Table names</a>
+        <a href="#dbeaver"><span class="toc-num">02</span>Connect: DBeaver</a>
+        <a href="#cli"><span class="toc-num">03</span>Connect: CLI</a>
+        <a href="#browse"><span class="toc-num">04</span>Find a table</a>
+        <a href="#read"><span class="toc-num">05</span>Read data</a>
+        <a href="#create"><span class="toc-num">06</span>Create tables</a>
+        <a href="#modify"><span class="toc-num">07</span>Change rows</a>
+        <a href="#history"><span class="toc-num">08</span>History &amp; rollback</a>
+        <a href="#views"><span class="toc-num">09</span>Views &amp; daily rollups</a>
+        <a href="#catalogs"><span class="toc-num">10</span>What's available</a>
+        <a href="#gotchas"><span class="toc-num">11</span>Gotchas</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="content">
+
+    <header class="prose">
+      <h1>Querying the Lakehouse</h1>
+      <p class="standfirst">
+        One SQL endpoint over every table in the cluster. Connect with DBeaver or the
+        command line, then read and write tables in either of two formats — Iceberg or
+        plain Hive — using the same SQL.
+      </p>
+    </header>
+
+    <!-- 01 ------------------------------------------------------------- -->
+    <section id="names">
+      <div class="sec-head"><span class="sec-num">01</span><h2>Every table has a three-part name</h2></div>
+      <div class="prose">
+        <p>
+          Trino reaches many storage systems at once, so a table name carries where it lives.
+          Write all three parts whenever you are not sure which one is the current default:
+        </p>
+      </div>
+
+      <div class="naming">
+        <div class="naming-line">
+          <span class="p1">iceberg</span><span class="dot">.</span><span class="p2">fmt_iceberg</span><span class="dot">.</span><span class="p3">events</span>
+        </div>
+        <div class="naming-legend">
+          <span><b class="p1">catalog</b> — which system</span>
+          <span><b class="p2">schema</b> — the folder inside it</span>
+          <span><b class="p3">table</b> — the table itself</span>
+        </div>
+      </div>
+
+      <div class="prose">
+        <p>
+          The two catalogs holding real lakehouse data are
+          <span class="pill ice">iceberg</span> and <span class="pill hive">hive</span>. They
+          share the same storage and the same catalog service, so you query both from one
+          connection — and can join across them in a single statement.
+        </p>
+      </div>
+    </section>
+
+    <!-- 02 ------------------------------------------------------------- -->
+    <section id="dbeaver">
+      <div class="sec-head"><span class="sec-num">02</span><h2>Connect with DBeaver</h2></div>
+      <div class="prose">
+        <p>
+          Create a new connection and pick the <strong>Trino</strong> driver — not Presto,
+          which is the older, separate project. Fill in these values:
+        </p>
+      </div>
+
+      <div class="conn">
+        <div class="conn-head">
+          <h3>Trino connection</h3>
+          <span class="conn-tag">driver: trino</span>
+        </div>
+        <dl class="fields">
+          <dt>Host</dt>        <dd>localhost</dd>
+          <dt>Port</dt>        <dd>8080</dd>
+          <dt>Username</dt>    <dd class="loose">Anything you like — it is only used to label your queries. <code>admin</code> is fine.</dd>
+          <dt>Password</dt>    <dd class="loose">Leave empty.</dd>
+          <dt>Catalog</dt>     <dd class="loose">Optional. <code>iceberg</code> saves typing; leave blank to browse everything.</dd>
+          <dt>Schema</dt>      <dd class="loose">Optional. <code>fmt_iceberg</code> if you set the catalog above.</dd>
+          <dt>JDBC URL</dt>    <dd>jdbc:trino://localhost:8080</dd>
+        </dl>
+      </div>
+
+      <div class="note">
+        <span class="note-label">Turn SSL off</span>
+        <div>
+          <p>
+            This cluster speaks plain HTTP. If SSL is enabled on the connection, DBeaver
+            fails with a handshake or <em>connection reset</em> error. Uncheck it under the
+            driver's SSL tab before you test the connection.
+          </p>
+        </div>
+      </div>
+
+      <div class="prose">
+        <p>
+          Hit <strong>Test Connection</strong>. DBeaver will offer to download the Trino
+          driver the first time — accept it. Once connected, the database navigator lists
+          every catalog, and you can open a SQL editor against any of them.
+        </p>
+      </div>
+    </section>
+
+    <!-- 03 ------------------------------------------------------------- -->
+    <section id="cli">
+      <div class="sec-head"><span class="sec-num">03</span><h2>Connect from the command line</h2></div>
+      <div class="prose">
+        <p>From the project directory, open an interactive SQL shell:</p>
+      </div>
+
+<pre><code><span class="k">make</span> cli</code></pre>
+
+      <div class="prose">
+        <p>
+          You get a <code>trino&gt;</code> prompt. Type SQL ending in a semicolon; use
+          <code>quit</code> to leave. Run something without opening a shell:
+        </p>
+      </div>
+
+<pre><code><span class="c"># a single statement</span>
+./scripts/trino-cli.sh --execute <span class="s">"SELECT count(*) FROM iceberg.fmt_iceberg.events"</span>
+
+<span class="c"># a whole .sql file, with results printed as tables</span>
+./scripts/run-sql.sh sql/41_format_evaluation.sql</code></pre>
+
+      <div class="prose">
+        <p>
+          Output comes back as aligned text by default. Add
+          <code>--output-format CSV</code>, <code>JSON</code> or <code>TSV</code> when you
+          want to pipe it somewhere.
+        </p>
+      </div>
+
+      <div class="note">
+        <span class="note-label">Default catalog</span>
+        <div>
+          <p>
+            <code>make cli</code> starts you in the <code>iceberg</code> catalog, so
+            <code>fmt_iceberg.events</code> works on its own. Reaching anything else still
+            needs the full name — <code>hive.fmt_hive.events</code>. To start somewhere
+            else: <code>./scripts/trino-cli.sh --catalog hive --schema fmt_hive</code>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 ------------------------------------------------------------- -->
+    <section id="browse">
+      <div class="sec-head"><span class="sec-num">04</span><h2>Find a table</h2></div>
+      <div class="prose">
+        <p>Work down the three levels, then look at the columns:</p>
+      </div>
+
+<pre><code><span class="k">SHOW</span> CATALOGS;                          <span class="c">-- which systems can I reach</span>
+<span class="k">SHOW</span> SCHEMAS <span class="k">FROM</span> iceberg;               <span class="c">-- folders in one of them</span>
+<span class="k">SHOW</span> TABLES <span class="k">FROM</span> iceberg.fmt_iceberg;    <span class="c">-- tables in one folder</span>
+
+<span class="k">DESCRIBE</span> iceberg.fmt_iceberg.events;     <span class="c">-- columns and types</span>
+<span class="k">SHOW CREATE TABLE</span> iceberg.fmt_iceberg.events;  <span class="c">-- how it was defined</span></code></pre>
+
+      <div class="prose">
+        <p>
+          To search across everything instead of clicking down the tree, query the
+          standard catalog views:
+        </p>
+      </div>
+
+<pre><code><span class="k">SELECT</span> table_schema, table_name
+<span class="k">FROM</span> iceberg.information_schema.tables
+<span class="k">WHERE</span> table_name <span class="k">LIKE</span> <span class="s">'%event%'</span>;</code></pre>
+    </section>
+
+    <!-- 05 ------------------------------------------------------------- -->
+    <section id="read">
+      <div class="sec-head"><span class="sec-num">05</span><h2>Read data</h2></div>
+      <div class="prose">
+        <p>Ordinary SQL — the format of the table underneath makes no difference to reads:</p>
+      </div>
+
+<pre><code><span class="k">SELECT</span> category, count(*) <span class="k">AS</span> n, round(avg(amount), 2) <span class="k">AS</span> avg_amount
+<span class="k">FROM</span> iceberg.fmt_iceberg.events
+<span class="k">WHERE</span> event_date &gt;= <span class="k">DATE</span> <span class="s">'1995-01-01'</span>
+  <span class="k">AND</span> event_date &lt;  <span class="k">DATE</span> <span class="s">'1996-01-01'</span>
+<span class="k">GROUP BY</span> category
+<span class="k">ORDER BY</span> n <span class="k">DESC</span>;</code></pre>
+
+      <div class="prose">
+        <h3 style="margin-bottom:10px">Joining across catalogs</h3>
+        <p>
+          Because one connection sees every catalog, a single query can combine tables that
+          live in completely different systems — here a lakehouse table and generated
+          benchmark data:
+        </p>
+      </div>
+
+<pre><code><span class="k">SELECT</span> e.category, count(*) <span class="k">AS</span> events, max(c.name) <span class="k">AS</span> sample_customer
+<span class="k">FROM</span> iceberg.fmt_iceberg.events e
+<span class="k">JOIN</span> tpch.tiny.customer c <span class="k">ON</span> c.custkey = e.user_id
+<span class="k">GROUP BY</span> e.category;</code></pre>
+    </section>
+
+    <!-- 06 ------------------------------------------------------------- -->
+    <section id="create">
+      <div class="sec-head"><span class="sec-num">06</span><h2>Create tables</h2></div>
+      <div class="prose">
+        <p>
+          Create a schema first — it becomes a folder in storage — then the table. Use the
+          <code>iceberg</code> catalog unless you specifically need the older Hive layout.
+        </p>
+      </div>
+
+<pre><code><span class="k">CREATE SCHEMA IF NOT EXISTS</span> iceberg.my_schema;
+
+<span class="k">CREATE TABLE</span> iceberg.my_schema.readings (
+    id          bigint,
+    sensor      varchar,
+    value       double,
+    taken_at    date
+)
+<span class="k">WITH</span> (partitioning = <span class="k">ARRAY</span>[<span class="s">'sensor'</span>, <span class="s">'month(taken_at)'</span>]);
+
+<span class="k">INSERT INTO</span> iceberg.my_schema.readings
+<span class="k">VALUES</span> (1, <span class="s">'north'</span>, 21.5, <span class="k">DATE</span> <span class="s">'2024-03-01'</span>);</code></pre>
+
+      <div class="prose">
+        <p>
+          <code>month(taken_at)</code> is worth noticing: Iceberg derives the partition from
+          the date column, so you filter on <code>taken_at</code> normally and it still
+          skips irrelevant files. There is no extra column to populate or remember.
+        </p>
+        <p>Build a table straight from a query with <code>CREATE TABLE … AS</code>:</p>
+      </div>
+
+<pre><code><span class="k">CREATE TABLE</span> iceberg.my_schema.recent_events <span class="k">AS</span>
+<span class="k">SELECT</span> * <span class="k">FROM</span> iceberg.fmt_iceberg.events
+<span class="k">WHERE</span> event_date &gt;= <span class="k">DATE</span> <span class="s">'1997-01-01'</span>;</code></pre>
+
+      <div class="note">
+        <span class="note-label">Shared namespace</span>
+        <div>
+          <p>
+            The two catalogs share one underlying catalog service, so a schema name means the
+            same folder in both. <code>hive.demo.events</code> and
+            <code>iceberg.demo.events</code> collide. Give each format its own schema —
+            <code>fmt_iceberg</code> and <code>fmt_hive</code> are named that way for exactly
+            this reason.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 07 ------------------------------------------------------------- -->
+    <section id="modify">
+      <div class="sec-head"><span class="sec-num">07</span><h2>Changing rows: the one real difference</h2></div>
+      <div class="prose">
+        <p>
+          Reads are identical across both formats. Writes are not. Iceberg supports
+          row-level changes; a plain Hive table can only be appended to or have whole
+          partitions dropped. Everything in this table was run against this cluster:
+        </p>
+      </div>
+
+      <div class="tw">
+        <table>
+          <thead>
+            <tr>
+              <th>Operation</th>
+              <th class="fmt-ice">iceberg</th>
+              <th class="fmt-hive">hive</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="op">INSERT</td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td>Appending is fine either way.</td>
+            </tr>
+            <tr>
+              <td class="op">UPDATE</td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td class="mid"><span class="chip n">fails</span></td>
+              <td>Hive: <em>Modifying Hive table rows is only supported for transactional tables.</em></td>
+            </tr>
+            <tr>
+              <td class="op">DELETE … WHERE id = 1</td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td class="mid"><span class="chip n">fails</span></td>
+              <td>Same error — Hive cannot delete individual rows.</td>
+            </tr>
+            <tr>
+              <td class="op">DELETE … WHERE &lt;partition&gt;</td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td class="mid"><span class="chip partial">partition only</span></td>
+              <td>Hive can drop a whole partition, e.g. <code>WHERE category = 'toys'</code>.</td>
+            </tr>
+            <tr>
+              <td class="op">MERGE</td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td class="mid"><span class="chip n">fails</span></td>
+              <td>Upserts need Iceberg.</td>
+            </tr>
+            <tr>
+              <td class="op">ADD COLUMN</td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td>Both allow adding columns.</td>
+            </tr>
+            <tr>
+              <td class="op">RENAME COLUMN</td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td class="mid"><span class="chip n">loses data</span></td>
+              <td>
+                On Hive the statement <em>succeeds</em> but the column reads back as
+                <code>NULL</code>. See the warning below.
+              </td>
+            </tr>
+            <tr>
+              <td class="op">CREATE VIEW</td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td class="mid"><span class="chip y">works</span></td>
+              <td>Views are stored in the catalog, not the data files.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="note-label">Never rename a Hive column</span>
+        <div>
+          <p>
+            It is the one operation here that fails silently. Trino reports success, and the
+            next <code>SELECT</code> returns <code>NULL</code> for the renamed column —
+            because Hive matches Parquet columns by name, so the old files no longer line up.
+            Run on a one-row table:
+          </p>
+          <p style="font-family:var(--mono);font-size:13px;color:var(--ink)">
+            hive&nbsp;→&nbsp;<span style="color:var(--no)">id 1, label NULL</span>
+            &nbsp;&nbsp;·&nbsp;&nbsp;
+            iceberg&nbsp;→&nbsp;<span style="color:var(--yes)">id 1, label 'a'</span>
+          </p>
+          <p>
+            Iceberg tracks columns by an internal id, so renaming is safe there. On a Hive
+            table, add a new column and copy the values across instead.
+          </p>
+        </div>
+      </div>
+
+      <div class="prose">
+        <p>So, on an Iceberg table, all of this just works:</p>
+      </div>
+
+<pre><code><span class="k">UPDATE</span> iceberg.my_schema.readings <span class="k">SET</span> value = 22.0 <span class="k">WHERE</span> id = 1;
+<span class="k">DELETE FROM</span> iceberg.my_schema.readings <span class="k">WHERE</span> sensor = <span class="s">'north'</span>;
+
+<span class="k">MERGE INTO</span> iceberg.my_schema.readings <span class="k">AS</span> t
+<span class="k">USING</span> (<span class="k">VALUES</span> (1, <span class="s">'north'</span>, 23.1)) <span class="k">AS</span> s(id, sensor, value)
+   <span class="k">ON</span> t.id = s.id
+<span class="k">WHEN MATCHED THEN UPDATE SET</span> value = s.value
+<span class="k">WHEN NOT MATCHED THEN INSERT VALUES</span> (s.id, s.sensor, s.value, <span class="k">current_date</span>);</code></pre>
+
+      <div class="prose">
+        <p>
+          Many small writes leave many small files behind, which slows reads. Compact them
+          when that happens:
+        </p>
+      </div>
+
+<pre><code><span class="k">ALTER TABLE</span> iceberg.my_schema.readings <span class="k">EXECUTE</span> optimize;</code></pre>
+    </section>
+
+    <!-- 08 ------------------------------------------------------------- -->
+    <section id="history">
+      <div class="sec-head"><span class="sec-num">08</span><h2>History and rollback</h2></div>
+      <div class="prose">
+        <p>
+          Every write to an Iceberg table creates a snapshot, and the old ones stay
+          readable. Hive tables keep no such record. Inspect history through the
+          metadata tables — note the quotes, they are required:
+        </p>
+      </div>
+
+<pre><code><span class="k">SELECT</span> committed_at, operation, summary[<span class="s">'added-records'</span>] <span class="k">AS</span> added
+<span class="k">FROM</span> iceberg.fmt_iceberg.<span class="s">"events$snapshots"</span>
+<span class="k">ORDER BY</span> committed_at;</code></pre>
+
+      <div class="prose">
+        <p>Then read the table as it was at any point:</p>
+      </div>
+
+<pre><code><span class="c">-- by snapshot id, taken from the query above</span>
+<span class="k">SELECT</span> count(*) <span class="k">FROM</span> iceberg.fmt_iceberg.events
+<span class="k">FOR VERSION AS OF</span> 9111639333786749600;
+
+<span class="c">-- or by wall-clock time</span>
+<span class="k">SELECT</span> count(*) <span class="k">FROM</span> iceberg.fmt_iceberg.events
+<span class="k">FOR TIMESTAMP AS OF</span> <span class="k">TIMESTAMP</span> <span class="s">'2026-11-08 09:45:00 UTC'</span>;</code></pre>
+
+      <div class="prose">
+        <p>Other metadata tables follow the same <code>"table$name"</code> pattern:</p>
+      </div>
+
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Metadata table</th><th>What it tells you</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="op">$snapshots</td><td>Every write, what it did, how many rows it added.</td></tr>
+            <tr><td class="op">$history</td><td>Which snapshot was current at which time.</td></tr>
+            <tr><td class="op">$files</td><td>One row per data file, with sizes and row counts.</td></tr>
+            <tr><td class="op">$partitions</td><td>Partitions with row and file counts per partition.</td></tr>
+            <tr><td class="op">$manifests</td><td>The index files Iceberg uses to track data files.</td></tr>
+            <tr><td class="op">$properties</td><td>Table settings such as format and compression.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 09 ------------------------------------------------------------- -->
+    <section id="views">
+      <div class="sec-head"><span class="sec-num">09</span><h2>Views and daily rollups</h2></div>
+      <div class="prose">
+        <p>
+          A <strong>view</strong> is a saved query. It stores no data, so it is always
+          current and costs a full scan every time you select from it.
+        </p>
+      </div>
+
+<pre><code><span class="k">CREATE SCHEMA IF NOT EXISTS</span> iceberg.reporting;
+
+<span class="k">CREATE OR REPLACE VIEW</span> iceberg.reporting.events_by_category <span class="k">AS</span>
+<span class="k">SELECT</span> category, count(*) <span class="k">AS</span> n, round(avg(amount), 2) <span class="k">AS</span> avg_amount
+<span class="k">FROM</span> iceberg.fmt_iceberg.events
+<span class="k">GROUP BY</span> category;</code></pre>
+
+      <div class="prose">
+        <p>
+          A <strong>materialized view</strong> stores its result as a real table, so reads
+          are cheap — but the answer is only as current as the last refresh. Use it for
+          rollups that are expensive to compute and do not need to be up to the second.
+        </p>
+      </div>
+
+<pre><code><span class="k">CREATE OR REPLACE MATERIALIZED VIEW</span> iceberg.reporting.events_daily_mv <span class="k">AS</span>
+<span class="k">SELECT</span>
+    event_date,
+    category,
+    count(*)                <span class="k">AS</span> event_count,
+    count(<span class="k">DISTINCT</span> user_id) <span class="k">AS</span> unique_users,
+    round(sum(amount), 2)   <span class="k">AS</span> total_amount
+<span class="k">FROM</span> iceberg.fmt_iceberg.events
+<span class="k">GROUP BY</span> event_date, category;
+
+<span class="c">-- without this it exists but holds nothing</span>
+<span class="k">REFRESH MATERIALIZED VIEW</span> iceberg.reporting.events_daily_mv;</code></pre>
+
+      <div class="prose">
+        <p>
+          Query it exactly like a table. To find out whether what you are reading is
+          current, ask Trino — it marks a view <code>STALE</code> by itself as soon as a
+          source table is written to:
+        </p>
+      </div>
+
+<pre><code><span class="k">SELECT</span> schema_name, name, freshness, last_fresh_time
+<span class="k">FROM</span> system.metadata.materialized_views
+<span class="k">WHERE</span> catalog_name = <span class="s">'iceberg'</span>;</code></pre>
+
+      <div class="note">
+        <span class="note-label">Refreshes are scheduled outside Trino</span>
+        <div>
+          <p>
+            Trino has no scheduler of its own, so <code>REFRESH</code> is driven by a
+            companion service in this stack. <code>events_daily_mv</code> rebuilds every
+            day at <strong>08:00 Taipei time</strong>.
+          </p>
+          <p>
+            If you need it sooner, run <code>make mv-refresh</code> — or the
+            <code>REFRESH</code> statement above — rather than waiting. Refreshing an
+            unchanged view is harmless: it reports <code>0 rows</code> and leaves the
+            stored data untouched.
+          </p>
+        </div>
+      </div>
+
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Need</th><th>Use</th><th>Why</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Always-current numbers</td>
+              <td class="op">VIEW</td>
+              <td>Recomputed per query; no staleness to reason about.</td>
+            </tr>
+            <tr>
+              <td>Fast dashboards over a big table</td>
+              <td class="op">MATERIALIZED VIEW</td>
+              <td>Reads hit a stored table instead of rescanning the source.</td>
+            </tr>
+            <tr>
+              <td>A one-off extract to keep</td>
+              <td class="op">CREATE TABLE … AS</td>
+              <td>A plain table — nothing refreshes it, which is sometimes what you want.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 10 ------------------------------------------------------------- -->
+    <section id="catalogs">
+      <div class="sec-head"><span class="sec-num">10</span><h2>What you can reach</h2></div>
+
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Catalog</th><th>Contains</th><th>Writable</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="op">iceberg</td>
+              <td>Lakehouse tables in Iceberg format. Start here.</td>
+              <td class="mid"><span class="chip y">yes</span></td>
+            </tr>
+            <tr>
+              <td class="op">hive</td>
+              <td>Lakehouse tables in plain Hive/Parquet format, same storage.</td>
+              <td class="mid"><span class="chip partial">append</span></td>
+            </tr>
+            <tr>
+              <td class="op">tpch</td>
+              <td>Generated benchmark data, any size. Useful for realistic test rows.</td>
+              <td class="mid"><span class="chip n">no</span></td>
+            </tr>
+            <tr>
+              <td class="op">tpcds</td>
+              <td>A second, wider benchmark dataset.</td>
+              <td class="mid"><span class="chip n">no</span></td>
+            </tr>
+            <tr>
+              <td class="op">memory</td>
+              <td>Scratch tables held in RAM. Gone when the cluster restarts.</td>
+              <td class="mid"><span class="chip y">yes</span></td>
+            </tr>
+            <tr>
+              <td class="op">system</td>
+              <td>The cluster's own state — running queries, nodes.</td>
+              <td class="mid"><span class="chip n">no</span></td>
+            </tr>
+            <tr>
+              <td class="op">jmx</td>
+              <td>Engine metrics, as queryable tables.</td>
+              <td class="mid"><span class="chip n">no</span></td>
+            </tr>
+            <tr>
+              <td class="op">metastore_db</td>
+              <td>The catalog service's own bookkeeping. Read-only by convention.</td>
+              <td class="mid"><span class="chip n">no</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="prose">
+        <p>
+          <code>tpch</code> is the quick way to get believable test data. Schemas are named
+          by scale — <code>tiny</code>, <code>sf1</code>, <code>sf10</code> — and the rows
+          are generated on demand, so nothing is stored until you write it somewhere:
+        </p>
+      </div>
+
+<pre><code><span class="k">CREATE TABLE</span> iceberg.my_schema.orders_sample <span class="k">AS</span>
+<span class="k">SELECT</span> * <span class="k">FROM</span> tpch.tiny.orders;</code></pre>
+    </section>
+
+    <!-- 11 ------------------------------------------------------------- -->
+    <section id="gotchas">
+      <div class="sec-head"><span class="sec-num">11</span><h2>Gotchas worth knowing up front</h2></div>
+
+      <div class="stack">
+        <div class="block">
+          <h3>Metadata tables need double quotes</h3>
+          <p style="color:var(--ink-2);font-size:15px">
+            The <code>$</code> makes <code>events$snapshots</code> an invalid bare
+            identifier. Write <code>iceberg.fmt_iceberg."events$snapshots"</code>. In the
+            shell, the <code>$</code> may also need escaping before it reaches Trino.
+          </p>
+        </div>
+
+        <div class="block">
+          <h3>On Hive tables, partition columns go last</h3>
+          <p style="color:var(--ink-2);font-size:15px">
+            A <code>CREATE TABLE … AS SELECT</code> into the <code>hive</code> catalog must
+            list the partition columns at the very end of the projection, in the same order
+            as <code>partitioned_by</code>. Iceberg has no such rule.
+          </p>
+        </div>
+
+        <div class="block">
+          <h3>Hive timestamps are milliseconds</h3>
+          <p style="color:var(--ink-2);font-size:15px">
+            The <code>hive</code> catalog stores <code>timestamp(3)</code>. Writing a
+            <code>timestamp(6)</code> value fails with <em>Incorrect timestamp precision</em>
+            — cast it down first. Iceberg keeps microseconds.
+          </p>
+        </div>
+
+        <div class="block">
+          <h3>Partitioned writes have a file-handle ceiling</h3>
+          <p style="color:var(--ink-2);font-size:15px">
+            Writing to more than 100 partitions at once fails with <em>Exceeded limit of 100
+            open writers</em>. Use a coarser partition — <code>year(...)</code> instead of
+            <code>month(...)</code> — or load in batches.
+          </p>
+        </div>
+
+        <div class="block">
+          <h3>Watch the Trino UI to see why a query was slow</h3>
+          <p style="color:var(--ink-2);font-size:15px">
+            <a href="http://localhost:8080">localhost:8080</a> takes any username and shows
+            query history and execution plans, including how much data each stage actually
+            read. It does not accept SQL — use DBeaver or the CLI for that.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Trino 484 · catalogs iceberg + hive on shared object storage · no authentication
+    </footer>
+
+  </main>
+</div>

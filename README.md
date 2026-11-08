@@ -85,7 +85,15 @@ conf/
     polaris.properties            Trino catalog pointing at the Polaris REST endpoint
 scripts/                          bootstrap + CLI helpers
 sql/                              sanity, seed, Iceberg feature tour, distribution checks
+docs/
+  querying-the-lakehouse.html     end-user guide: DBeaver/CLI connection + table operations
 ```
+
+`docs/querying-the-lakehouse.html` is the guide to hand to people who only
+need to *query* this stack — connection settings, finding and reading tables,
+what Iceberg allows that plain Hive does not, and the refresh story for
+materialized views. It is a standalone page; open it in a browser, or publish
+it wherever your team reads docs.
 
 ---
 
