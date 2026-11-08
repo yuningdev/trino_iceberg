@@ -185,9 +185,40 @@ services:
   #   deploy:
   #     replicas: ${TRINO_WORKERS}
 
+  # ------------------------------------------------------- PySpark (ad-hoc)
+  # On-demand client for the example scripts under ./pyspark, run directly
+  # against MinIO - independent of Trino/Hive Metastore (see the comments at
+  # the top of pyspark/iceberg/create_and_load.py for why). Not started by
+  # `make up`; invoke via `make pyspark-iceberg` / `make pyspark-plain`.
+  #
+  # linux/amd64: Temurin's aarch64 JIT crashes under Docker Desktop's Apple
+  # Silicon VM, same issue as hive-metastore above.
+  spark:
+    image: apache/spark:${SPARK_VERSION}
+    platform: linux/amd64
+    environment:
+      # Matches the py4j build bundled in $SPARK_VERSION - revisit if bumped.
+      PYTHONPATH: /opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip
+      PYSPARK_PYTHON: python3
+      HOME: /root
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET}
+      ICEBERG_VERSION: ${ICEBERG_VERSION}
+      SPARK_HADOOP_AWS_VERSION: ${SPARK_HADOOP_AWS_VERSION}
+      SPARK_AWS_SDK_VERSION: ${SPARK_AWS_SDK_VERSION}
+    user: root
+    entrypoint: ["python3"]
+    volumes:
+      - ./pyspark:/opt/pyspark:ro
+      - spark-ivy-cache:/root/.ivy2
+    networks: [lakehouse]
+
 volumes:
   minio-data:
   postgres-data:
+  spark-ivy-cache:
 
 networks:
   lakehouse:
