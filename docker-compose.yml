@@ -203,6 +203,11 @@ services:
       - ./scripts:/scripts:ro
     networks: [lakehouse]
     restart: unless-stopped
+    # The Trino image carries a HEALTHCHECK that probes a local coordinator.
+    # There is no server in this container, so inheriting it would report
+    # `unhealthy` forever. Use `make logs-mv` to see what it is doing.
+    healthcheck:
+      disable: true
 
   # ------------------------------------------------------- PySpark (ad-hoc)
   # Scratch PySpark runtime for scripts under ./pyspark. Not started by
