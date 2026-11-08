@@ -13,7 +13,7 @@ export
 
 .PHONY: help up down restart clean build ps logs logs-trino logs-hms health cli \
         sql seed features checks scale ui minio-ui bucket doctor wait \
-        polaris-up polaris-down polaris-bootstrap pyspark-iceberg pyspark-plain
+        polaris-up polaris-down polaris-bootstrap pyspark-iceberg pyspark-plain pyspark-query
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -124,3 +124,6 @@ pyspark-iceberg: ## Load 500k dummy rows into an Iceberg table via PySpark (no T
 
 pyspark-plain: ## Load 500k dummy rows into a plain Parquet table via PySpark (no Trino needed)
 	$(COMPOSE) run --rm spark /opt/pyspark/spark/create_and_load.py
+
+pyspark-query: ## Query both pyspark-created tables (proves neither needs Hive Metastore)
+	$(COMPOSE) run --rm spark /opt/pyspark/query_tables.py
