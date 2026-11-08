@@ -1,0 +1,194 @@
+# ============================================================================
+# Trino playground - distributed cluster over an Iceberg lakehouse
+#
+#   trino-coordinator ──┐
+#   trino-worker  (xN) ─┴─> hive-metastore ──> postgres   (catalog metadata)
+#                       └─> minio                         (table data, s3://)
+#
+# Everything is driven from .env. Start with:  make up
+# ============================================================================
+
+x-trino-common: &trino-common
+  image: trinodb/trino:${TRINO_VERSION}
+  environment: &trino-env
+    # Consumed by conf/trino/catalog/*.properties via ${ENV:...}
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET}
+    AWS_REGION: ${AWS_REGION}
+    HMS_DB_NAME: ${HMS_DB_NAME}
+    HMS_DB_USER: ${HMS_DB_USER}
+    HMS_DB_PASSWORD: ${HMS_DB_PASSWORD}
+  volumes: &trino-shared-volumes
+    - ./conf/trino/catalog:/etc/trino/catalog:ro
+    - ./conf/trino/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
+    # Uncomment to take over JVM sizing from the image default (see README):
+    #- ./conf/trino/jvm.config:/etc/trino/jvm.config:ro
+  networks: [lakehouse]
+  restart: unless-stopped
+
+services:
+
+  # ------------------------------------------------------------------ MinIO
+  minio:
+    # Bitnami's archived build - minio/minio no longer exists on Docker Hub.
+    # Its entrypoint starts `minio server` for us (API :9000, console :9001).
+    image: ${MINIO_IMAGE}:${MINIO_VERSION}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_REGION: ${AWS_REGION}
+      # Quieter startup: don't nag about newer releases.
+      MINIO_UPDATE: "off"
+    ports:
+      - "${MINIO_API_PORT}:9000"       # S3 API
+      - "${MINIO_CONSOLE_PORT}:9001"   # web console
+    volumes:
+      # Bitnami serves from /bitnami/minio/data, not /data.
+      - minio-data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks: [lakehouse]
+    restart: unless-stopped
+
+  # Creates the lakehouse bucket + prefixes, then exits. Re-runnable.
+  minio-init:
+    image: ${MC_IMAGE}:${MC_VERSION}
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET}
+      AWS_REGION: ${AWS_REGION}
+    entrypoint: ["/bin/sh", "/scripts/minio-bootstrap.sh"]
+    volumes:
+      - ./scripts:/scripts:ro
+    networks: [lakehouse]
+    restart: "no"
+
+  # # -------------------------------------------- Hive Metastore + its RDBMS
+  postgres:
+    image: postgres:${POSTGRES_VERSION}
+    environment:
+      POSTGRES_DB: ${HMS_DB_NAME}
+      POSTGRES_USER: ${HMS_DB_USER}
+      POSTGRES_PASSWORD: ${HMS_DB_PASSWORD}
+      # Keep collation stable across host locales.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [lakehouse]
+    restart: unless-stopped
+
+  hive-metastore:
+    # Temurin 21's aarch64 JIT hits a SIGILL in registerNatives on Docker
+    # Desktop's Apple Silicon VM (host CPU feature detection bug) - run the
+    # amd64 build under Rosetta/QEMU emulation instead until that's fixed upstream.
+    platform: linux/amd64
+    build:
+      context: ./docker/hive-metastore
+      args:
+        HIVE_METASTORE_VERSION: ${HIVE_METASTORE_VERSION}
+    image: trino-playground/hive-metastore:${HIVE_METASTORE_VERSION}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      HIVE_CUSTOM_CONF_DIR: /hive_custom_conf
+      # JDBC settings arrive as -D flags so that .env stays authoritative.
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/${HMS_DB_NAME}
+        -Djavax.jdo.option.ConnectionUserName=${HMS_DB_USER}
+        -Djavax.jdo.option.ConnectionPassword=${HMS_DB_PASSWORD}
+      # Picked up by hadoop-aws' default credential provider chain.
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_REGION: ${AWS_REGION}
+      # Expanded inside metastore-site.xml as ${env.LAKEHOUSE_BUCKET}.
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET}
+    ports:
+      - "${HMS_PORT}:9083"
+    volumes:
+      - ./conf/hive-metastore:/hive_custom_conf:ro
+    healthcheck:
+      # No nc/curl guaranteed in the image; bash's /dev/tcp always works.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9083"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    networks: [lakehouse]
+    restart: unless-stopped
+
+  # # ----------------------------------------------------------------- Trino
+  # trino-coordinator:
+  #   <<: *trino-common
+  #   container_name: trino-coordinator
+  #   hostname: trino-coordinator
+  #   depends_on:
+  #     hive-metastore:
+  #       condition: service_healthy
+  #   ports:
+  #     - "${TRINO_PORT}:8080"
+  #   volumes:
+  #     - ./conf/trino/catalog:/etc/trino/catalog:ro
+  #     - ./conf/trino/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
+  #     - ./conf/trino/coordinator/config.properties:/etc/trino/config.properties:ro
+  #     - ./conf/trino/coordinator/node.properties:/etc/trino/node.properties:ro
+  #     - ./conf/trino/coordinator/log.properties:/etc/trino/log.properties:ro
+  #     # Example/benchmark SQL, reachable as `trino --file /sql/...`
+  #     - ./sql:/sql:ro
+  #   healthcheck:
+  #     test:
+  #       - CMD
+  #       - python3
+  #       - -c
+  #       - |
+  #         import json, sys, urllib.request
+  #         info = json.load(urllib.request.urlopen("http://localhost:8080/v1/info", timeout=5))
+  #         sys.exit(0 if not info["starting"] else 1)
+  #     interval: 10s
+  #     timeout: 8s
+  #     retries: 30
+  #     start_period: 20s
+
+  # trino-worker:
+  #   <<: *trino-common
+  #   depends_on:
+  #     trino-coordinator:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./conf/trino/catalog:/etc/trino/catalog:ro
+  #     - ./conf/trino/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
+  #     - ./conf/trino/worker/config.properties:/etc/trino/config.properties:ro
+  #     - ./conf/trino/worker/node.properties:/etc/trino/node.properties:ro
+  #     - ./conf/trino/worker/log.properties:/etc/trino/log.properties:ro
+  #   # Scale at will:  docker compose up -d --scale trino-worker=4
+  #   deploy:
+  #     replicas: ${TRINO_WORKERS}
+
+volumes:
+  minio-data:
+  postgres-data:
+
+networks:
+  lakehouse:
+    name: trino-playground

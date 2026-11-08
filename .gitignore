@@ -1,0 +1,8 @@
+# local state produced by docker volumes mounted into ./data
+data/
+# scratch output from scripts
+.out/
+*.log
+
+# local secrets/config - copy .env.example instead
+.env

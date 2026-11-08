@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  Mounted at $HIVE_CUSTOM_CONF_DIR; the image entrypoint copies it into the
+  metastore conf directory before starting the Thrift server.
+
+  JDBC connection settings are NOT here - they are passed as -D flags through
+  SERVICE_OPTS in docker-compose.yml so that .env stays the single source of
+  truth for credentials.
+
+  S3 credentials are NOT here either: hadoop-aws' default provider chain
+  includes EnvironmentVariableCredentialsProvider, so AWS_ACCESS_KEY_ID /
+  AWS_SECRET_ACCESS_KEY on the container are picked up automatically. That
+  keeps this file free of secrets and free of SDK-version-specific class names.
+-->
+<configuration>
+
+  <!-- ===================== thrift server ===================== -->
+  <property>
+    <name>metastore.thrift.port</name>
+    <value>9083</value>
+  </property>
+  <property>
+    <name>metastore.task.threads.always</name>
+    <value>org.apache.hadoop.hive.metastore.events.EventCleanerTask</value>
+  </property>
+  <!-- Playground: no Kerberos, no SASL, no event listeners. -->
+  <property>
+    <name>metastore.use.SSL</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>hive.metastore.schema.verification</name>
+    <value>false</value>
+  </property>
+
+  <!-- ===================== warehouse root ===================== -->
+  <!-- Resolved from the LAKEHOUSE_BUCKET env var (Hadoop Configuration
+       supports ${env.VAR} expansion). This is what makes a bare
+       CREATE SCHEMA iceberg.foo land in MinIO without an explicit location. -->
+  <property>
+    <name>metastore.warehouse.dir</name>
+    <value>s3a://${env.LAKEHOUSE_BUCKET}/warehouse</value>
+  </property>
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>s3a://${env.LAKEHOUSE_BUCKET}/warehouse</value>
+  </property>
+
+  <!-- ===================== s3a -> MinIO ====================== -->
+  <property>
+    <name>fs.s3a.impl</name>
+    <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+  </property>
+  <property>
+    <name>fs.AbstractFileSystem.s3a.impl</name>
+    <value>org.apache.hadoop.fs.s3a.S3A</value>
+  </property>
+  <property>
+    <name>fs.s3a.endpoint</name>
+    <value>http://minio:9000</value>
+  </property>
+  <property>
+    <name>fs.s3a.endpoint.region</name>
+    <value>${env.AWS_REGION}</value>
+  </property>
+  <!-- MinIO serves buckets as path components, not DNS subdomains. -->
+  <property>
+    <name>fs.s3a.path.style.access</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>fs.s3a.connection.ssl.enabled</name>
+    <value>false</value>
+  </property>
+  <!-- Skip the bucket-exists probe on every filesystem init (faster, and
+       avoids needing s3:ListAllMyBuckets). -->
+  <property>
+    <name>fs.s3a.bucket.probe</name>
+    <value>0</value>
+  </property>
+  <property>
+    <name>fs.s3a.change.detection.version.required</name>
+    <value>false</value>
+  </property>
+
+</configuration>

@@ -1,0 +1,72 @@
+# ============================================================================
+# Optional overlay: adds Apache Polaris as a second, REST-based Iceberg
+# catalog alongside the Hive Metastore. Bring it up with
+#
+#     make polaris-up
+#
+# which is shorthand for
+#
+#     docker compose -f docker-compose.yml -f docker-compose.polaris.yml up -d
+#
+# EXPERIMENTAL: Polaris' storage-config surface for non-AWS S3 (MinIO) and its
+# bootstrap flow move between releases. The wiring below targets Polaris 1.8
+# with in-memory persistence. Verify with `make polaris-bootstrap` and expect
+# to adjust `scripts/polaris-bootstrap.sh` if the API has shifted.
+# ============================================================================
+
+services:
+
+  polaris:
+    image: apache/polaris:${POLARIS_VERSION}
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      # Dev-only: no external database, state is lost on restart.
+      POLARIS_PERSISTENCE_TYPE: in-memory
+      POLARIS_REALM_CONTEXT_REALMS: ${POLARIS_REALM}
+      # realm,client-id,client-secret - auto-bootstraps the root principal.
+      POLARIS_BOOTSTRAP_CREDENTIALS: ${POLARIS_REALM},${POLARIS_CLIENT_ID},${POLARIS_CLIENT_SECRET}
+      # Let catalogs point at a non-AWS S3 endpoint.
+      POLARIS_FEATURES_ALLOW_INSECURE_STORAGE_TYPES: "true"
+      POLARIS_FEATURES_SUPPORTED_CATALOG_STORAGE_TYPES: "[\"S3\",\"FILE\"]"
+      # Static credentials for MinIO (no STS available).
+      POLARIS_STORAGE_AWS_ACCESS_KEY: ${MINIO_ROOT_USER}
+      POLARIS_STORAGE_AWS_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_REGION: ${AWS_REGION}
+      QUARKUS_LOG_LEVEL: INFO
+    ports:
+      - "${POLARIS_PORT}:8181"        # Iceberg REST + management API
+      - "${POLARIS_MGMT_PORT}:8182"   # health / metrics
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8181"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [lakehouse]
+    restart: unless-stopped
+
+  # Drop the Polaris catalog file into Trino's catalog directory and pass the
+  # extra env the file references. Volumes merge by target path, so the base
+  # mounts stay in place.
+  trino-coordinator:
+    depends_on:
+      polaris:
+        condition: service_healthy
+    environment:
+      POLARIS_CATALOG: ${POLARIS_CATALOG}
+      POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID}
+      POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET}
+    volumes:
+      - ./conf/polaris/polaris.properties:/etc/trino/catalog/polaris.properties:ro
+
+  trino-worker:
+    environment:
+      POLARIS_CATALOG: ${POLARIS_CATALOG}
+      POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID}
+      POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET}
+    volumes:
+      - ./conf/polaris/polaris.properties:/etc/trino/catalog/polaris.properties:ro
