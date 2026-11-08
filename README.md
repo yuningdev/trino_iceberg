@@ -162,6 +162,38 @@ provider chain includes `EnvironmentVariableCredentialsProvider`, so
 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` on the container are enough. That
 keeps the XML free of both secrets and SDK-version-specific class names.
 
+### Materialized views refresh on a sidecar, not inside Trino
+
+Trino has **no scheduler**. `REFRESH MATERIALIZED VIEW` is a statement someone
+has to run, so the `mv-refresh` service drives it once a day.
+
+It reuses the `trinodb/trino` image purely for the bundled CLI, because that
+image is deliberately minimal — **no `cron`, no `tzdata`**, and no
+`python3`/`grep`/`awk` either. So `scripts/mv-refresh.sh` is a `sleep` loop and
+converts local time to UTC from a fixed offset instead of a timezone name:
+
+```
+MV_REFRESH_AT=08:00        # wall clock, in UTC+MV_REFRESH_UTC_OFFSET
+MV_REFRESH_UTC_OFFSET=8    # 8 = Asia/Taipei -> fires at 00:00 UTC
+MV_LIST=iceberg.reporting.events_daily_mv
+```
+
+The fixed offset is correct *because Taiwan has no daylight saving*. For a zone
+that observes DST, this needs a tzdata-bearing image — otherwise the slot
+silently drifts by an hour twice a year.
+
+Trino tracks staleness on its own: writing to a source table flips the view's
+`freshness` to `STALE` in `system.metadata.materialized_views`, which is what
+`make mv-status` reports. A `REFRESH` against an unchanged source reports
+`0 rows` and leaves the stored data alone.
+
+```bash
+make mv            # create/replace the view and populate it
+make mv-refresh    # refresh now, don't wait for 08:00
+make mv-status     # freshness + last refresh time
+make logs-mv       # what the scheduler is waiting for
+```
+
 ### Spark cannot talk to this metastore (and why Trino can)
 
 **PySpark cannot write through HMS 4.2.1 at all.** Spark 3.5.x bundles a Hive

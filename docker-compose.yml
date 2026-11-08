@@ -181,6 +181,29 @@ services:
     deploy:
       replicas: ${TRINO_WORKERS}
 
+  # ------------------------------------------------- MV refresh scheduler
+  # Trino has no built-in scheduler, so `REFRESH MATERIALIZED VIEW` has to be
+  # driven from outside. This reuses the Trino image purely for its bundled
+  # CLI and runs a sleep-loop (the image has no cron and no tzdata).
+  #
+  # 08:00 Asia/Taipei = 00:00 UTC. Taiwan has no DST so the offset is fixed;
+  # change REFRESH_AT / REFRESH_UTC_OFFSET to move the slot.
+  mv-refresh:
+    image: trinodb/trino:${TRINO_VERSION}
+    depends_on:
+      trino-coordinator:
+        condition: service_healthy
+    environment:
+      TRINO_SERVER: http://trino-coordinator:8080
+      REFRESH_AT: ${MV_REFRESH_AT}
+      REFRESH_UTC_OFFSET: ${MV_REFRESH_UTC_OFFSET}
+      MV_LIST: ${MV_LIST}
+    entrypoint: ["/bin/bash", "/scripts/mv-refresh.sh", "daily"]
+    volumes:
+      - ./scripts:/scripts:ro
+    networks: [lakehouse]
+    restart: unless-stopped
+
   # ------------------------------------------------------- PySpark (ad-hoc)
   # Scratch PySpark runtime for scripts under ./pyspark. Not started by
   # `make up`; invoke via `make pyspark S=<script>`.

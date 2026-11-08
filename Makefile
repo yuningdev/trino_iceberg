@@ -13,7 +13,8 @@ export
 
 .PHONY: help up down restart clean build ps logs logs-trino logs-hms health cli \
         sql seed features checks scale ui minio-ui bucket doctor wait \
-        polaris-up polaris-down polaris-bootstrap pyspark compare
+        polaris-up polaris-down polaris-bootstrap pyspark compare \
+        mv mv-refresh mv-status logs-mv
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -118,6 +119,20 @@ polaris-bootstrap: ## Create the Polaris catalog + grants (run after polaris-up)
 
 polaris-down: ## Stop the Polaris overlay
 	$(COMPOSE_POLARIS) down --remove-orphans
+
+mv: ## Create/replace the reporting materialized view and populate it
+	@./scripts/run-sql.sh sql/50_materialized_view.sql
+
+mv-refresh: ## Refresh the materialized views right now (does not wait for the daily slot)
+	$(COMPOSE) run --rm --entrypoint /bin/bash mv-refresh /scripts/mv-refresh.sh once
+
+mv-status: ## Show each materialized view's freshness
+	@$(COMPOSE) exec -T trino-coordinator trino --server http://localhost:8080 \
+		--execute "SELECT schema_name, name, freshness, last_fresh_time FROM system.metadata.materialized_views WHERE catalog_name='iceberg'" \
+		--output-format ALIGNED
+
+logs-mv: ## Tail the refresh scheduler's log
+	$(COMPOSE) logs -f --tail=50 mv-refresh
 
 compare: ## Write 500k rows as Iceberg + as plain Hive (both via HMS), then evaluate
 	@./scripts/run-sql.sh sql/40_format_comparison.sql sql/41_format_evaluation.sql
