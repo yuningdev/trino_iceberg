@@ -138,58 +138,57 @@ services:
     networks: [lakehouse]
     restart: unless-stopped
 
-  # # ----------------------------------------------------------------- Trino
-  # trino-coordinator:
-  #   <<: *trino-common
-  #   container_name: trino-coordinator
-  #   hostname: trino-coordinator
-  #   depends_on:
-  #     hive-metastore:
-  #       condition: service_healthy
-  #   ports:
-  #     - "${TRINO_PORT}:8080"
-  #   volumes:
-  #     - ./conf/trino/catalog:/etc/trino/catalog:ro
-  #     - ./conf/trino/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
-  #     - ./conf/trino/coordinator/config.properties:/etc/trino/config.properties:ro
-  #     - ./conf/trino/coordinator/node.properties:/etc/trino/node.properties:ro
-  #     - ./conf/trino/coordinator/log.properties:/etc/trino/log.properties:ro
-  #     # Example/benchmark SQL, reachable as `trino --file /sql/...`
-  #     - ./sql:/sql:ro
-  #   healthcheck:
-  #     test:
-  #       - CMD
-  #       - python3
-  #       - -c
-  #       - |
-  #         import json, sys, urllib.request
-  #         info = json.load(urllib.request.urlopen("http://localhost:8080/v1/info", timeout=5))
-  #         sys.exit(0 if not info["starting"] else 1)
-  #     interval: 10s
-  #     timeout: 8s
-  #     retries: 30
-  #     start_period: 20s
+  # ----------------------------------------------------------------- Trino
+  trino-coordinator:
+    <<: *trino-common
+    container_name: trino-coordinator
+    hostname: trino-coordinator
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+    ports:
+      - "${TRINO_PORT}:8080"
+    volumes:
+      - ./conf/trino/catalog:/etc/trino/catalog:ro
+      - ./conf/trino/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
+      - ./conf/trino/coordinator/config.properties:/etc/trino/config.properties:ro
+      - ./conf/trino/coordinator/node.properties:/etc/trino/node.properties:ro
+      - ./conf/trino/coordinator/log.properties:/etc/trino/log.properties:ro
+      # Example/benchmark SQL, reachable as `trino --file /sql/...`
+      - ./sql:/sql:ro
+    healthcheck:
+      # Trino's own script - the hardened image ships no python3/grep/awk, so
+      # hand-rolled probes break. It reads the port from config.properties and
+      # waits for /v1/info to report {"starting":false}.
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 10s
+      timeout: 8s
+      retries: 30
+      start_period: 20s
 
-  # trino-worker:
-  #   <<: *trino-common
-  #   depends_on:
-  #     trino-coordinator:
-  #       condition: service_healthy
-  #   volumes:
-  #     - ./conf/trino/catalog:/etc/trino/catalog:ro
-  #     - ./conf/trino/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
-  #     - ./conf/trino/worker/config.properties:/etc/trino/config.properties:ro
-  #     - ./conf/trino/worker/node.properties:/etc/trino/node.properties:ro
-  #     - ./conf/trino/worker/log.properties:/etc/trino/log.properties:ro
-  #   # Scale at will:  docker compose up -d --scale trino-worker=4
-  #   deploy:
-  #     replicas: ${TRINO_WORKERS}
+  trino-worker:
+    <<: *trino-common
+    depends_on:
+      trino-coordinator:
+        condition: service_healthy
+    volumes:
+      - ./conf/trino/catalog:/etc/trino/catalog:ro
+      - ./conf/trino/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
+      - ./conf/trino/worker/config.properties:/etc/trino/config.properties:ro
+      - ./conf/trino/worker/node.properties:/etc/trino/node.properties:ro
+      - ./conf/trino/worker/log.properties:/etc/trino/log.properties:ro
+    # Scale at will:  docker compose up -d --scale trino-worker=4
+    deploy:
+      replicas: ${TRINO_WORKERS}
 
   # ------------------------------------------------------- PySpark (ad-hoc)
-  # On-demand client for the example scripts under ./pyspark, run directly
-  # against MinIO - independent of Trino/Hive Metastore (see the comments at
-  # the top of pyspark/iceberg/create_and_load.py for why). Not started by
-  # `make up`; invoke via `make pyspark-iceberg` / `make pyspark-plain`.
+  # Scratch PySpark runtime for scripts under ./pyspark. Not started by
+  # `make up`; invoke via `make pyspark S=<script>`.
+  #
+  # NOTE: Spark cannot write through this stack's Hive Metastore - its
+  # bundled Hive 2.3.9 client calls the `get_table` RPC that HMS dropped in
+  # 4.0.1 (see README). Use Trino for anything that must go through the
+  # catalog; this service is for Spark-local experiments only.
   #
   # linux/amd64: Temurin's aarch64 JIT crashes under Docker Desktop's Apple
   # Silicon VM, same issue as hive-metastore above.

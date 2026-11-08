@@ -13,7 +13,7 @@ export
 
 .PHONY: help up down restart clean build ps logs logs-trino logs-hms health cli \
         sql seed features checks scale ui minio-ui bucket doctor wait \
-        polaris-up polaris-down polaris-bootstrap pyspark-iceberg pyspark-plain pyspark-query
+        polaris-up polaris-down polaris-bootstrap pyspark compare
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -119,11 +119,10 @@ polaris-bootstrap: ## Create the Polaris catalog + grants (run after polaris-up)
 polaris-down: ## Stop the Polaris overlay
 	$(COMPOSE_POLARIS) down --remove-orphans
 
-pyspark-iceberg: ## Load 500k dummy rows into an Iceberg table via PySpark (no Trino needed)
-	$(COMPOSE) run --rm spark /opt/pyspark/iceberg/create_and_load.py
+compare: ## Write 500k rows as Iceberg + as plain Hive (both via HMS), then evaluate
+	@./scripts/run-sql.sh sql/40_format_comparison.sql sql/41_format_evaluation.sql
 
-pyspark-plain: ## Load 500k dummy rows into a plain Parquet table via PySpark (no Trino needed)
-	$(COMPOSE) run --rm spark /opt/pyspark/spark/create_and_load.py
-
-pyspark-query: ## Query both pyspark-created tables (proves neither needs Hive Metastore)
-	$(COMPOSE) run --rm spark /opt/pyspark/query_tables.py
+pyspark: ## Run a script from ./pyspark, e.g. `make pyspark S=spark/practice.py`
+	@test -n "$(S)" || { echo "usage: make pyspark S=<path under ./pyspark>"; exit 1; }
+	@test -f "pyspark/$(S)" || { echo "no such script: pyspark/$(S)"; exit 1; }
+	$(COMPOSE) run --rm spark /opt/pyspark/$(S)

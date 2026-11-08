@@ -162,6 +162,47 @@ provider chain includes `EnvironmentVariableCredentialsProvider`, so
 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` on the container are enough. That
 keeps the XML free of both secrets and SDK-version-specific class names.
 
+### Spark cannot talk to this metastore (and why Trino can)
+
+**PySpark cannot write through HMS 4.2.1 at all.** Spark 3.5.x bundles a Hive
+**2.3.9** metastore client (`/opt/spark/jars/hive-metastore-2.3.9.jar`), which
+calls the plain `get_table` Thrift RPC. HMS removed that method in **4.0.1**,
+keeping only `get_table_req`. Any Spark write fails with:
+
+```
+org.apache.thrift.TApplicationException: Invalid method name: 'get_table'
+```
+
+Which server versions still answer the old call (measured by listing the
+`ThriftHiveMetastore$Processor$*` classes in each release's jar):
+
+| HMS | `get_table` | `get_table_req` |
+|------|---|---|
+| 3.1.3 | yes | yes |
+| 4.0.0 | yes | yes |
+| 4.0.1 | **no** | yes |
+| 4.1.0 | **no** | yes |
+| 4.2.0 | **no** | yes |
+| 4.2.1 (pinned here) | **no** | yes |
+
+Two things follow:
+
+* **Bumping Iceberg does not help.** Iceberg's `HiveCatalog` uses whatever Hive
+  client is on the Spark classpath, so even `iceberg-spark-runtime` 1.11.0
+  fails identically.
+* **Trino is unaffected.** Trino ships its own Thrift stubs;
+  `ThriftHiveMetastoreClient` builds a `GetTableRequest` (i.e. `get_table_req`)
+  and has an `AlternativeCall` mechanism to fall back across HMS versions. So
+  the metastore is healthy — the incompatibility is specific to Spark's
+  ancient bundled client.
+
+This is why `sql/40_format_comparison.sql` uses **Trino** as the writer: it is
+the only engine here that actually exercises the catalog path. If you need
+Spark to be the writer, your options are downgrading HMS to 4.0.0/3.1.3 (both
+only exist as the *full* `apache/hive` image, not `standalone-metastore-*`), or
+switching to an Iceberg REST catalog (see the Polaris section), which avoids
+Thrift entirely.
+
 ### JVM heap
 
 The stack deliberately does **not** mount a `jvm.config`, so each Trino
