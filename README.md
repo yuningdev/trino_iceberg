@@ -170,6 +170,53 @@ provider chain includes `EnvironmentVariableCredentialsProvider`, so
 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` on the container are enough. That
 keeps the XML free of both secrets and SDK-version-specific class names.
 
+### Running Polaris as the only catalog
+
+`make polaris-only` stops HMS and swaps Trino's catalog directory for
+`conf/trino/catalog-polaris`, so Polaris is the single metadata store.
+`make hms-back` reverses it.
+
+Polaris persists to its own `polaris` database on the same Postgres that HMS
+uses — a different database, so the two never share a table. **Note what that
+means:** a REST catalog still needs a relational database to be durable,
+exactly like HMS. What changes is the protocol Trino speaks to it, not the
+absence of a database.
+
+Four things that are easy to get wrong here, all of which bite silently:
+
+1. **`in-memory` persistence loses everything on restart.** It is the upstream
+   default in this overlay's ancestor and Polaris says so at startup — *"The
+   current metastore is intended for tests only."* Data files survive in MinIO
+   but become orphaned, with no catalog pointing at them.
+
+2. **On JDBC, Polaris does not bootstrap itself.** With `in-memory` the server
+   creates the realm from `POLARIS_BOOTSTRAP_CREDENTIALS`; with
+   `relational-jdbc` it starts up *healthy* and then fails every request with
+   `relation "entities" does not exist`. The schema has to be created by the
+   separate `apache/polaris-admin-tool` image, which
+   `scripts/polaris-bootstrap.sh` now runs.
+
+3. **`currentSchema` is mandatory in the JDBC URL.** The bundled schema script
+   creates unqualified tables and has no `CREATE SCHEMA` of its own, so
+   bootstrap dies with `no schema has been selected to create in` unless the
+   schema already exists *and* is named in the URL.
+
+4. **Without fixed signing keys, restarting Polaris breaks Trino.** Polaris
+   mints a fresh RSA pair on each startup, invalidating the OAuth token Trino
+   cached; every query then fails with `Failed to list namespaces` until Trino
+   is restarted too. `scripts/polaris-bootstrap.sh` generates a dev key pair
+   into `conf/polaris/keys/` (gitignored) and the overlay mounts it.
+
+Also note `iceberg.rest-catalog.vended-credentials-enabled=false`: the catalog
+is registered with `stsUnavailable=true` because MinIO has no STS, so Polaris
+cannot mint scoped credentials and every write would fail with *"Credential
+vending was requested … but no credentials are available"*. Trino uses the
+static keys instead.
+
+`docker-compose.polaris.yml` — the older "Polaris *alongside* HMS" overlay —
+cannot start at all: it mounts a file into `/etc/trino/catalog`, which the base
+file already mounts read-only.
+
 ### Materialized views need the Hive Metastore, not a REST catalog
 
 Verified on this stack: with Polaris as the only metadata store, Trino refuses

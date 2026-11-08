@@ -21,6 +21,55 @@ MGMT="${HOST}/api/management/v1"
 
 json() { python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
 
+# --------------------------------------------------------------------------
+# Token-signing keys. Polaris generates a throwaway RSA pair on each startup
+# unless given files, which invalidates Trino's cached OAuth token every time
+# Polaris restarts. Dev-only keys, gitignored, generated once.
+# --------------------------------------------------------------------------
+keydir="conf/polaris/keys"
+if [[ ! -f "${keydir}/private.pem" ]]; then
+  echo ">> generating Polaris token-signing keys in ${keydir}"
+  mkdir -p "${keydir}"
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${keydir}/private.pem" 2>/dev/null
+  openssl rsa -pubout -in "${keydir}/private.pem" -out "${keydir}/public.pem" 2>/dev/null
+  chmod 600 "${keydir}/private.pem"
+fi
+
+# --------------------------------------------------------------------------
+# Step 0, only for relational-jdbc persistence: create the schema and
+# bootstrap the realm into it.
+#
+# On in-memory persistence the server bootstraps itself from
+# POLARIS_BOOTSTRAP_CREDENTIALS. On JDBC it does NOT - it starts up fine, then
+# every request 500s with `relation "entities" does not exist`. The schema has
+# to be created by the separate admin tool, and the bundled script creates
+# unqualified tables with no CREATE SCHEMA of its own, so the target schema
+# must already exist and be named in the JDBC URL via currentSchema.
+# --------------------------------------------------------------------------
+if [[ -n "${POLARIS_DB_NAME:-}" ]] && docker compose ps --status running --services 2>/dev/null | grep -qx postgres; then
+  schema="${POLARIS_DB_SCHEMA:-polaris_schema}"
+  jdbc="jdbc:postgresql://postgres:5432/${POLARIS_DB_NAME}?currentSchema=${schema}"
+
+  echo ">> ensuring database '${POLARIS_DB_NAME}' and schema '${schema}' exist"
+  docker compose exec -T postgres psql -U "${HMS_DB_USER}" -d postgres -tAc \
+    "SELECT 1 FROM pg_database WHERE datname='${POLARIS_DB_NAME}'" | grep -q 1 \
+    || docker compose exec -T postgres psql -U "${HMS_DB_USER}" -d postgres \
+         -c "CREATE DATABASE ${POLARIS_DB_NAME} OWNER ${HMS_DB_USER};" >/dev/null
+  docker compose exec -T postgres psql -U "${HMS_DB_USER}" -d "${POLARIS_DB_NAME}" \
+    -c "CREATE SCHEMA IF NOT EXISTS ${schema} AUTHORIZATION ${HMS_DB_USER};" >/dev/null
+
+  echo ">> bootstrapping realm '${POLARIS_REALM}' into Postgres (admin tool)"
+  docker run --rm --network "$(docker compose ps --format '{{.Networks}}' postgres | head -1)" \
+    -e POLARIS_PERSISTENCE_TYPE=relational-jdbc \
+    -e QUARKUS_DATASOURCE_JDBC_URL="${jdbc}" \
+    -e QUARKUS_DATASOURCE_USERNAME="${HMS_DB_USER}" \
+    -e QUARKUS_DATASOURCE_PASSWORD="${HMS_DB_PASSWORD}" \
+    "apache/polaris-admin-tool:${POLARIS_VERSION}" \
+    bootstrap -r "${POLARIS_REALM}" -c "${POLARIS_REALM},${POLARIS_CLIENT_ID},${POLARIS_CLIENT_SECRET}" 2>&1 \
+    | grep -viE '^\s+at |^INFO exec|^INFO running|SVE' | sed -e 's/^/   /'
+  echo
+fi
+
 echo ">> requesting an access token for ${POLARIS_CLIENT_ID}@${POLARIS_REALM}"
 token_response="$(curl -sS -X POST "${HOST}/api/catalog/v1/oauth/tokens" \
   -H "Polaris-Realm: ${POLARIS_REALM}" \

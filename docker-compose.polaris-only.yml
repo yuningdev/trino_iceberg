@@ -19,9 +19,14 @@
 #     hive-metastore and postgres back up — depends_on merges rather than
 #     replaces across overlays. Needs Compose >= 2.24.
 #
-# Polaris runs with in-memory persistence, so it needs no database of its own
-# — but it also forgets every catalog, namespace and table when it restarts.
-# Re-run `make polaris-bootstrap` after a restart.
+# Polaris persists to Postgres, in its own `polaris` database - separate from
+# the `metastore` database HMS uses, so the two never touch each other.
+#
+# Worth noting what this exposes: a REST catalog still needs a relational
+# database to be durable, exactly like HMS. What changes is the protocol Trino
+# speaks (REST instead of Thrift), not the absence of a database. Polaris'
+# in-memory mode exists for tests only and it says so on startup:
+#   "The current metastore is intended for tests only."
 # ============================================================================
 
 services:
@@ -31,10 +36,28 @@ services:
     depends_on:
       minio-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     environment:
-      POLARIS_PERSISTENCE_TYPE: in-memory
+      # currentSchema is required: the bundled schema script creates
+      # unqualified tables and contains no CREATE SCHEMA, so without it
+      # bootstrap dies with "no schema has been selected to create in".
+      # The schema itself is created by scripts/polaris-bootstrap.sh, which
+      # also runs the admin tool - the server does NOT self-bootstrap on
+      # JDBC persistence the way it does on in-memory.
+      POLARIS_PERSISTENCE_TYPE: relational-jdbc
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/${POLARIS_DB_NAME}?currentSchema=${POLARIS_DB_SCHEMA}
+      QUARKUS_DATASOURCE_USERNAME: ${HMS_DB_USER}
+      QUARKUS_DATASOURCE_PASSWORD: ${HMS_DB_PASSWORD}
       POLARIS_REALM_CONTEXT_REALMS: ${POLARIS_REALM}
       POLARIS_BOOTSTRAP_CREDENTIALS: ${POLARIS_REALM},${POLARIS_CLIENT_ID},${POLARIS_CLIENT_SECRET}
+      # Stable token-signing keys. Without these Polaris generates a new RSA
+      # pair on every startup, which silently invalidates the OAuth token
+      # Trino is holding - after a Polaris restart every query fails with
+      # "Failed to list namespaces" until Trino is restarted too. Generated
+      # by scripts/polaris-bootstrap.sh into a gitignored directory.
+      POLARIS_AUTHENTICATION_TOKEN_BROKER_RSA_KEY_PAIR_PUBLIC_KEY_FILE: /keys/public.pem
+      POLARIS_AUTHENTICATION_TOKEN_BROKER_RSA_KEY_PAIR_PRIVATE_KEY_FILE: /keys/private.pem
       POLARIS_FEATURES_ALLOW_INSECURE_STORAGE_TYPES: "true"
       POLARIS_FEATURES_SUPPORTED_CATALOG_STORAGE_TYPES: "[\"S3\",\"FILE\"]"
       POLARIS_STORAGE_AWS_ACCESS_KEY: ${MINIO_ROOT_USER}
@@ -46,6 +69,8 @@ services:
     ports:
       - "${POLARIS_PORT}:8181"
       - "${POLARIS_MGMT_PORT}:8182"
+    volumes:
+      - ./conf/polaris/keys:/keys:ro
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8181"]
       interval: 10s

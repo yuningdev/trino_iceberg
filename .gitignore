@@ -6,3 +6,6 @@ data/
 
 # local secrets/config - copy .env.example instead
 .env
+
+# Polaris dev token-signing keys - generated locally, never commit
+conf/polaris/keys/
